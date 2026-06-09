@@ -4,10 +4,10 @@ providers = ["python"]
 nixPkgs = ["python311"]
 
 [phases.install]
-cmds = ["pip install --break-system-packages -r requirements.txt"]
+cmds = ["python3 -m pip install --break-system-packages -r requirements.txt"]
 
 [phases.build]
 cmds = []
 
 [start]
-cmd = "python bot/main.py"
+cmd = "python3 bot/main.py"
