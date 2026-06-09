@@ -242,7 +242,7 @@ class ActivityBot(discord.Client):
     async def wait_until_ready_event(self):
         await self._ready_event.wait()
 
-    async def find_text_channel_for_member(self, discord_user_id: str) -> discord.TextChannel | None:
+    async def find_voice_channel_for_member(self, discord_user_id: str) -> discord.VoiceChannel | None:
         for guild in self.guilds:
             try:
                 member = guild.get_member(int(discord_user_id))
@@ -256,32 +256,12 @@ class ActivityBot(discord.Client):
 
             voice = member.voice
             if not voice or not voice.channel:
-                logger.info(f"{discord_user_id} not in voice channel")
+                logger.info(f"{discord_user_id} not in any voice channel")
                 return None
 
             vc = voice.channel
-            cat = vc.category
-            logger.info(f"Found {discord_user_id} in voice: '{vc.name}' | category: '{cat.name if cat else 'NO CATEGORY'}'")
-
-            if cat:
-                cat_channels = [(ch.name, type(ch).__name__) for ch in cat.channels]
-                logger.info(f"Channels in category '{cat.name}': {cat_channels}")
-                for ch in cat.channels:
-                    if isinstance(ch, discord.TextChannel):
-                        return ch
-
-            # Fallback: any text channel whose name overlaps with voice channel name
-            vc_words = set(re.sub(r"[^\w\u0E00-\u0E7F]", " ", vc.name.lower()).split())
-            for ch in guild.text_channels:
-                ch_words = set(re.sub(r"[^\w\u0E00-\u0E7F]", " ", ch.name.lower()).split())
-                if vc_words & ch_words:
-                    logger.info(f"Fallback text channel match: #{ch.name}")
-                    return ch
-
-            # Last resort: first text channel in guild
-            if guild.text_channels:
-                logger.warning(f"Using first text channel in guild: #{guild.text_channels[0].name}")
-                return guild.text_channels[0]
+            logger.info(f"Found {discord_user_id} in voice channel: '{vc.name}'")
+            return vc
 
         return None
 
@@ -292,16 +272,17 @@ class ActivityBot(discord.Client):
         now = datetime.now().strftime("%H:%M")
         message = f"{emoji} {action}\n> 🕐 {now} · 📌 {group_name}"
 
-        channel = await self.find_text_channel_for_member(discord_user_id)
-        if channel:
+        vc = await self.find_voice_channel_for_member(discord_user_id)
+        if vc:
             try:
-                await channel.send(message)
-                logger.info(f"Sent to #{channel.name}: {name} - {activity}")
-                return True, channel.name
+                # Discord voice channels have built-in text (Text in Voice) — send directly
+                await vc.send(message)
+                logger.info(f"Sent to voice channel #{vc.name}: {name} - {activity}")
+                return True, vc.name
             except Exception as e:
-                logger.error(f"Failed to send to #{channel.name}: {e}")
+                logger.error(f"Failed to send to voice channel #{vc.name}: {e}")
 
-        logger.warning(f"No channel found for {name} ({discord_user_id})")
+        logger.warning(f"No voice channel found for {name} ({discord_user_id})")
         return False, None
 
 
