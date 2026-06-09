@@ -221,7 +221,8 @@ DESTINATION_CHANNEL_IDS: set[str] = {
 }
 
 # ต้องอยู่ในห้องนานเท่าไหร่ถึงจะนับเป็นห้องทำงาน (วินาที)
-WORK_CHANNEL_DELAY_SECONDS = 60
+# สั้นพอที่จะจับการย้ายห้องทำงานจริง แต่นานพอที่จะกรองการแวะคุยสั้น ๆ
+WORK_CHANNEL_DELAY_SECONDS = 600  # 10 นาที
 
 
 def get_emoji(activity: str, is_return: bool) -> str:
@@ -300,9 +301,9 @@ class ActivityBot(discord.Client):
         intents.voice_states = True
         super().__init__(intents=intents)
         self._ready_event = asyncio.Event()
-        # discord_user_id (int) → channel_id (int) ห้องทำงานจริง (อยู่นาน ≥ 60 วิ)
+        # discord_user_id (int) → channel_id (int) ห้องทำงานจริง
         self._work_channels: dict[int, int] = {}
-        # pending tasks สำหรับ delay การบันทึกห้องทำงาน
+        # pending timer tasks — ยกเลิกเมื่อพนักงานย้ายออกก่อนครบ 10 นาที
         self._work_channel_tasks: dict[int, asyncio.Task] = {}
 
     async def on_ready(self):
@@ -310,25 +311,27 @@ class ActivityBot(discord.Client):
         self._ready_event.set()
 
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-        # ยกเลิก timer เดิมถ้ามี (คนออกจากห้องหรือย้ายไปห้องอื่น)
+        # ยกเลิก timer เดิมทุกครั้งที่พนักงานย้ายห้อง
         old_task = self._work_channel_tasks.pop(member.id, None)
         if old_task:
             old_task.cancel()
 
-        # ถ้าย้ายเข้าห้องที่ไม่ใช่ห้องปลายทาง → เริ่ม timer 60 วิ
+        # เริ่ม timer ใหม่เฉพาะห้องที่ไม่ใช่ห้องปลายทาง
+        # ถ้าอยู่ครบ 10 นาทีโดยไม่ย้าย → ถือว่านี่คือห้องทำงาน
         if after.channel and str(after.channel.id) not in DESTINATION_CHANNEL_IDS:
-            channel_snapshot = after.channel
-            async def _commit(m: discord.Member, ch: discord.VoiceChannel):
+            ch = after.channel
+            async def _commit(m: discord.Member, channel: discord.VoiceChannel):
                 try:
                     await asyncio.sleep(WORK_CHANNEL_DELAY_SECONDS)
-                    # ตรวจว่ายังอยู่ห้องเดิมอยู่ไหม
-                    refreshed = ch.guild.get_member(m.id)
-                    if refreshed and refreshed.voice and refreshed.voice.channel and refreshed.voice.channel.id == ch.id:
-                        self._work_channels[m.id] = ch.id
-                        logger.info(f"Work channel confirmed for {m.display_name}: #{ch.name}")
+                    refreshed = channel.guild.get_member(m.id)
+                    if (refreshed and refreshed.voice
+                            and refreshed.voice.channel
+                            and refreshed.voice.channel.id == channel.id):
+                        self._work_channels[m.id] = channel.id
+                        logger.info(f"Work channel updated for {m.display_name}: #{channel.name}")
                 except asyncio.CancelledError:
                     pass
-            self._work_channel_tasks[member.id] = asyncio.create_task(_commit(member, channel_snapshot))
+            self._work_channel_tasks[member.id] = asyncio.create_task(_commit(member, ch))
 
     async def wait_until_ready_event(self):
         await self._ready_event.wait()
