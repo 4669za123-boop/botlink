@@ -298,6 +298,9 @@ def parse_message(text: str, group_name: str) -> dict | None:
 # ---------------------------------------------------------------------------
 # Discord bot
 # ---------------------------------------------------------------------------
+STATUS_CHANNEL_ID = int(os.environ.get("DISCORD_STATUS_CHANNEL_ID", "0") or "0")
+
+
 class ActivityBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
@@ -305,6 +308,7 @@ class ActivityBot(discord.Client):
         intents.voice_states = True
         super().__init__(intents=intents)
         self._ready_event = asyncio.Event()
+        self.tree = discord.app_commands.CommandTree(self)
 
         # ระบบจำห้องทำงานแบบนับเวลา รายชั่วโมง
         # member_id → (channel_id, join_timestamp) — ห้องที่กำลังอยู่ตอนนี้
@@ -313,6 +317,9 @@ class ActivityBot(discord.Client):
         self._hour_time: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
         # ชั่วโมงปัจจุบัน (0-23) เพื่อรู้เมื่อขึ้นชั่วโมงใหม่
         self._current_hour: int = datetime.now().hour
+
+    async def setup_hook(self):
+        await self.tree.sync()
 
     async def on_ready(self):
         logger.info(f"Discord bot ready: {self.user}")
@@ -492,6 +499,59 @@ class ActivityBot(discord.Client):
 
 
 discord_bot = ActivityBot()
+
+
+@discord_bot.tree.command(name="status", description="ดูสถานะบอทและห้องทำงานของพนักงาน")
+async def status_command(interaction: discord.Interaction):
+    # จำกัดให้ใช้ได้เฉพาะ status channel เท่านั้น
+    if STATUS_CHANNEL_ID and interaction.channel_id != STATUS_CHANNEL_ID:
+        await interaction.response.send_message(
+            "❌ คำสั่งนี้ใช้ได้เฉพาะใน status channel เท่านั้น", ephemeral=True
+        )
+        return
+
+    now = datetime.now().strftime("%d/%m %H:%M:%S")
+    hour = datetime.now().hour
+    lines = [f"🟢 **Bot Status** — `{now}`",
+             f"⏱ Hour slot: `{hour:02d}:00 – {(hour+1)%24:02d}:00`",
+             ""]
+
+    # สร้าง reverse map: discord_id → name
+    discord_to_name = {v["discord_id"]: v["name"] for v in EMPLOYEES.values()}
+
+    # รวบรวมข้อมูลห้องทำงานของทุกคนที่มีสถิติ
+    work_info: list[tuple[str, str, float]] = []  # (name, channel_name, seconds)
+    for member_id, ch_map in discord_bot._hour_time.items():
+        # รวม ongoing session
+        total: dict[int, float] = dict(ch_map)
+        if member_id in discord_bot._voice_join_time:
+            cur_ch_id, join_ts = discord_bot._voice_join_time[member_id]
+            if str(cur_ch_id) not in DESTINATION_CHANNEL_IDS:
+                total[cur_ch_id] = total.get(cur_ch_id, 0) + (time_module.time() - join_ts)
+
+        if not total:
+            continue
+
+        best_ch_id = max(total, key=lambda c: total[c])
+        best_secs = total[best_ch_id]
+
+        # หาชื่อห้องและชื่อพนักงาน
+        ch_obj = discord_bot.get_channel(best_ch_id)
+        ch_name = f"#{ch_obj.name}" if ch_obj else f"ID:{best_ch_id}"
+        disc_id = str(member_id)
+        name = discord_to_name.get(disc_id, disc_id)
+        work_info.append((name, ch_name, best_secs))
+
+    if work_info:
+        work_info.sort(key=lambda x: x[1])  # เรียงตามห้อง
+        lines.append(f"**ห้องทำงาน ({len(work_info)} คน):**")
+        for name, ch_name, secs in work_info:
+            mins = int(secs // 60)
+            lines.append(f"• **{name}** → {ch_name} ({mins} นาที)")
+    else:
+        lines.append("_ยังไม่มีข้อมูลห้องทำงาน (รอพนักงานเข้า voice channel)_")
+
+    await interaction.response.send_message("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
