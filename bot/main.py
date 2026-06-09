@@ -329,7 +329,6 @@ class ActivityBot(discord.Client):
     async def on_ready(self):
         logger.info(f"Discord bot ready: {self.user}")
         self._ready_event.set()
-        await self.send_status("🟢 **Bot online** — Telegram + Discord connected")
 
     async def send_status(self, message: str):
         """ส่งข้อความสถานะไปยัง DISCORD_STATUS_CHANNEL_ID ถ้ากำหนดไว้"""
@@ -606,6 +605,8 @@ async def start_telegram(on_activity):
 
     me = await client.get_me()
     logger.info(f"Telegram connected as: {me.username or me.first_name}")
+    await discord_bot.wait_until_ready_event()
+    await discord_bot.send_status("🟢 **Bot online** — Telegram + Discord connected")
 
     @client.on(events.NewMessage())
     async def handler(event):
