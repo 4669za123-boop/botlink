@@ -3,6 +3,8 @@ import re
 import os
 import json
 import logging
+import time as time_module
+from collections import defaultdict
 from datetime import datetime
 
 from telethon import TelegramClient, events
@@ -220,10 +222,6 @@ DESTINATION_CHANNEL_IDS: set[str] = {
     v for v in ACTIVITY_MOVE_CHANNEL.values() if v
 }
 
-# ต้องอยู่ในห้องนานเท่าไหร่ถึงจะนับเป็นห้องทำงาน (วินาที)
-# สั้นพอที่จะจับการย้ายห้องทำงานจริง แต่นานพอที่จะกรองการแวะคุยสั้น ๆ
-WORK_CHANNEL_DELAY_SECONDS = 600  # 10 นาที
-
 
 def get_emoji(activity: str, is_return: bool) -> str:
     if is_return:
@@ -307,37 +305,41 @@ class ActivityBot(discord.Client):
         intents.voice_states = True
         super().__init__(intents=intents)
         self._ready_event = asyncio.Event()
-        # discord_user_id (int) → channel_id (int) ห้องทำงานจริง
-        self._work_channels: dict[int, int] = {}
-        # pending timer tasks — ยกเลิกเมื่อพนักงานย้ายออกก่อนครบ 10 นาที
-        self._work_channel_tasks: dict[int, asyncio.Task] = {}
+
+        # ระบบจำห้องทำงานแบบนับเวลา รายชั่วโมง
+        # member_id → (channel_id, join_timestamp) — ห้องที่กำลังอยู่ตอนนี้
+        self._voice_join_time: dict[int, tuple[int, float]] = {}
+        # member_id → {channel_id: วินาทีที่อยู่} — สะสมไว้ตลอดชั่วโมงนี้
+        self._hour_time: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+        # ชั่วโมงปัจจุบัน (0-23) เพื่อรู้เมื่อขึ้นชั่วโมงใหม่
+        self._current_hour: int = datetime.now().hour
 
     async def on_ready(self):
         logger.info(f"Discord bot ready: {self.user}")
         self._ready_event.set()
 
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-        # ยกเลิก timer เดิมทุกครั้งที่พนักงานย้ายห้อง
-        old_task = self._work_channel_tasks.pop(member.id, None)
-        if old_task:
-            old_task.cancel()
+        now = time_module.time()
+        current_hour = datetime.now().hour
 
-        # เริ่ม timer ใหม่เฉพาะห้องที่ไม่ใช่ห้องปลายทาง
-        # ถ้าอยู่ครบ 10 นาทีโดยไม่ย้าย → ถือว่านี่คือห้องทำงาน
-        if after.channel and str(after.channel.id) not in DESTINATION_CHANNEL_IDS:
-            ch = after.channel
-            async def _commit(m: discord.Member, channel: discord.VoiceChannel):
-                try:
-                    await asyncio.sleep(WORK_CHANNEL_DELAY_SECONDS)
-                    refreshed = channel.guild.get_member(m.id)
-                    if (refreshed and refreshed.voice
-                            and refreshed.voice.channel
-                            and refreshed.voice.channel.id == channel.id):
-                        self._work_channels[m.id] = channel.id
-                        logger.info(f"Work channel updated for {m.display_name}: #{channel.name}")
-                except asyncio.CancelledError:
-                    pass
-            self._work_channel_tasks[member.id] = asyncio.create_task(_commit(member, ch))
+        # ขึ้นชั่วโมงใหม่ → reset สถิติทั้งหมด
+        if current_hour != self._current_hour:
+            self._current_hour = current_hour
+            self._hour_time.clear()
+            logger.info(f"New hour slot {current_hour:02d}:00 — resetting work channel stats")
+
+        # บันทึกเวลาที่อยู่ในห้องก่อนหน้า
+        if member.id in self._voice_join_time:
+            prev_ch_id, join_ts = self._voice_join_time[member.id]
+            duration = now - join_ts
+            if str(prev_ch_id) not in DESTINATION_CHANNEL_IDS:
+                self._hour_time[member.id][prev_ch_id] += duration
+
+        # บันทึกห้องใหม่ที่เข้า
+        if after.channel:
+            self._voice_join_time[member.id] = (after.channel.id, now)
+        else:
+            self._voice_join_time.pop(member.id, None)
 
     async def wait_until_ready_event(self):
         await self._ready_event.wait()
@@ -381,6 +383,21 @@ class ActivityBot(discord.Client):
                 return channel_name
         return ""
 
+    def get_work_channel_id(self, member_id: int) -> int | None:
+        """คืน channel_id ที่อยู่นานสุดในชั่วโมงนี้ (ไม่นับห้องปลายทาง)"""
+        now = time_module.time()
+
+        # รวมเวลาที่สะสมไว้ + session ที่กำลังอยู่ตอนนี้
+        time_by_ch: dict[int, float] = dict(self._hour_time[member_id])
+        if member_id in self._voice_join_time:
+            cur_ch_id, join_ts = self._voice_join_time[member_id]
+            if str(cur_ch_id) not in DESTINATION_CHANNEL_IDS:
+                time_by_ch[cur_ch_id] = time_by_ch.get(cur_ch_id, 0) + (now - join_ts)
+
+        if not time_by_ch:
+            return None
+        return max(time_by_ch, key=lambda ch: time_by_ch[ch])
+
     async def send_notification(self, discord_user_id: str, name: str, activity: str,
                                  is_return: bool, group_name: str) -> tuple[bool, str | None]:
         emoji = get_emoji(activity, is_return)
@@ -393,11 +410,11 @@ class ActivityBot(discord.Client):
             logger.warning(f"No member found for {name} ({discord_user_id})")
             return False, None
 
-        # ห้องทำงานจริง (อยู่นาน ≥ 10 นาที) คือห้องที่ใช้แจ้งเตือนและย้ายกลับ
-        work_channel_id = self._work_channels.get(member.id)
-        work_vc = await self.find_voice_channel_by_id(str(work_channel_id)) if work_channel_id else None
+        # ห้องทำงาน = ห้องที่อยู่นานสุดในชั่วโมงนี้
+        work_ch_id = self.get_work_channel_id(member.id)
+        work_vc = await self.find_voice_channel_by_id(str(work_ch_id)) if work_ch_id else None
 
-        # ห้องที่ member อยู่ตอนนี้ (ถ้าไม่ใช่ห้องปลายทาง)
+        # ห้องที่ member อยู่ตอนนี้ (fallback ถ้ายังไม่มีสถิติ)
         current_ch = None
         if member.voice and member.voice.channel:
             ch = member.voice.channel
@@ -405,32 +422,26 @@ class ActivityBot(discord.Client):
                 current_ch = ch
 
         if is_return:
-            # กลับที่นั่ง → ย้ายกลับห้องทำงาน และแจ้งเตือนที่นั่น
-            if work_vc:
+            # กลับที่นั่ง → ย้ายกลับห้องทำงาน + แจ้งที่นั่น
+            target_vc = work_vc or current_ch
+            if target_vc:
                 try:
-                    await member.move_to(work_vc)
-                    logger.info(f"Moved {name} back → #{work_vc.name}")
+                    await member.move_to(target_vc)
+                    logger.info(f"Moved {name} back → #{target_vc.name}")
                 except discord.Forbidden:
                     logger.error(f"No permission to move {name} — bot needs 'Move Members' permission")
                 except Exception as e:
                     logger.error(f"Failed to move {name} back: {e}")
             else:
-                logger.info(f"No work channel recorded for {name}, skipping return move")
+                logger.info(f"No work channel found for {name}, skipping return move")
+            notify_vc = target_vc
 
-            notify_vc = work_vc
         else:
             target_channel_id = self.get_target_channel_name(activity)
 
             if target_channel_id:
-                # กินข้าว / ทานข้าว → ต้องรู้ห้องทำงานเพื่อแจ้งและย้ายกลับ
-                # ถ้ายังไม่มีห้องที่จำไว้ → ใช้ห้องปัจจุบัน + บันทึกเป็นห้องทำงาน
-                if work_vc is None and current_ch:
-                    work_vc = current_ch
-                    self._work_channels[member.id] = current_ch.id
-                    logger.info(f"Recorded work channel for {name}: #{current_ch.name}")
-
-                notify_vc = work_vc
-
+                # กินข้าว / ทานข้าว → แจ้งในห้องทำงาน แล้วย้ายไป Dining
+                notify_vc = work_vc or current_ch
                 target_vc = await self.find_voice_channel_by_id(target_channel_id)
                 if target_vc:
                     mem_vc = member.voice.channel if member.voice else None
@@ -447,7 +458,7 @@ class ActivityBot(discord.Client):
                 else:
                     logger.warning(f"Target channel ID '{target_channel_id}' not found")
             else:
-                # ปวดน้อย / ปวดหนัก / พัก → แจ้งห้องที่อยู่ตอนนี้เลย ไม่บันทึกห้องทำงาน
+                # ปวดน้อย / ปวดหนัก / พัก → แจ้งห้องที่อยู่ตอนนี้เลย ไม่บันทึกเพิ่ม
                 notify_vc = work_vc or current_ch
                 if notify_vc is None:
                     logger.warning(f"{name} is not in any voice channel — notification skipped")
