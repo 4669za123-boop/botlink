@@ -250,10 +250,16 @@ def parse_message(text: str, group_name: str) -> dict | None:
 
     activity = None
 
-    # Format A: check-in success  "✅ **ลงทะเบียนสำเร็จ：** `ปวดหนัก`"
+    # Format A: check-in success with backticks  "✅ **ลงทะเบียนสำเร็จ：** `ปวดหนัก`"
     a_match = re.search(r"ลงทะเบียนสำเร็จ[：:][^`]*`([^`]+)`", text)
     if a_match:
         activity = a_match.group(1).strip()
+
+    # Format A2: check-in success without backticks  "✅ ลงทะเบียนสำเร็จ：ปวดหนัก 06/09 16:14:07"
+    if not activity:
+        a2_match = re.search(r"ลงทะเบียนสำเร็จ[：:]\s*([^\s\d/][^\s\d/]*)", text)
+        if a2_match:
+            activity = a2_match.group(1).strip()
 
     # Format B: กลับที่นั่ง  "ลงทะเบียนสำหรับ กลับที่นั่ง สำเร็จ"
     if not activity:
