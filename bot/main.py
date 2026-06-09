@@ -292,6 +292,8 @@ class ActivityBot(discord.Client):
         intents.voice_states = True
         super().__init__(intents=intents)
         self._ready_event = asyncio.Event()
+        # discord_user_id (int) → channel_id (int) ก่อนถูกย้ายออก
+        self._home_channels: dict[int, int] = {}
 
     async def on_ready(self):
         logger.info(f"Discord bot ready: {self.user}")
@@ -354,15 +356,37 @@ class ActivityBot(discord.Client):
         # Current voice channel (send notification here — this is their "original" room)
         current_vc = member.voice.channel if member.voice else None
 
-        # Auto-move: only for non-return activities
-        if not is_return:
-            target_name = self.get_target_channel_name(activity)
-            if target_name:
-                target_vc = await self.find_voice_channel_by_id(target_name)
+        # Auto-move logic
+        if is_return:
+            # กลับที่นั่ง → ย้ายกลับห้องเดิมที่บันทึกไว้
+            home_channel_id = self._home_channels.pop(member.id, None)
+            if home_channel_id:
+                home_vc = await self.find_voice_channel_by_id(str(home_channel_id))
+                if home_vc:
+                    try:
+                        await member.move_to(home_vc)
+                        logger.info(f"Moved {name} back → #{home_vc.name}")
+                    except discord.Forbidden:
+                        logger.error(f"No permission to move {name} — bot needs 'Move Members' permission")
+                    except Exception as e:
+                        logger.error(f"Failed to move {name} back: {e}")
+                else:
+                    logger.warning(f"Home channel ID {home_channel_id} not found for {name}")
+            else:
+                logger.info(f"No saved home channel for {name}, skipping return move")
+        else:
+            # Activity → ย้ายไปห้องปลายทาง และบันทึกห้องเดิมไว้
+            target_channel_id = self.get_target_channel_name(activity)
+            if target_channel_id:
+                target_vc = await self.find_voice_channel_by_id(target_channel_id)
                 if target_vc:
                     if current_vc and current_vc.id == target_vc.id:
                         logger.info(f"{name} already in target channel '{target_vc.name}', skipping move")
                     else:
+                        # บันทึกห้องเดิมก่อนย้าย
+                        if current_vc:
+                            self._home_channels[member.id] = current_vc.id
+                            logger.info(f"Saved home channel for {name}: #{current_vc.name}")
                         try:
                             await member.move_to(target_vc)
                             logger.info(f"Moved {name} → #{target_vc.name}")
@@ -371,7 +395,7 @@ class ActivityBot(discord.Client):
                         except Exception as e:
                             logger.error(f"Failed to move {name}: {e}")
                 else:
-                    logger.warning(f"Target channel ID '{target_name}' not found")
+                    logger.warning(f"Target channel ID '{target_channel_id}' not found")
 
         # Send notification to original channel (before move)
         if current_vc:
