@@ -424,11 +424,15 @@ class ActivityBot(discord.Client):
         return max(time_by_ch, key=lambda ch: time_by_ch[ch])
 
     async def send_notification(self, discord_user_id: str, name: str, activity: str,
-                                 is_return: bool, group_name: str) -> tuple[bool, str | None]:
+                                 is_return: bool, group_name: str, timestamp: str | None = None) -> tuple[bool, str | None]:
         emoji = get_emoji(activity, is_return)
         action = f"**{name}** กลับที่นั่งแล้ว" if is_return else f"**{name}** ไป{activity}"
-        now = datetime.now().strftime("%H:%M")
-        message = f"{emoji} {action}\n> 🕐 {now} · 📌 {group_name}"
+        if timestamp:
+            # timestamp format: "dd/mm HH:MM:SS" → extract HH:MM
+            time_part = timestamp.split(" ")[-1][:5]
+        else:
+            time_part = datetime.now().strftime("%H:%M")
+        message = f"{emoji} {action}\n> 🕐 {time_part} · 📌 {group_name}"
 
         guild, member = await self.find_member(discord_user_id)
         if member is None:
@@ -661,6 +665,7 @@ async def on_activity(parsed: dict):
         parsed["activity"],
         parsed["is_return"],
         parsed["group_name"],
+        parsed.get("timestamp"),
     )
     status = f"sent to #{channel}" if sent else "not sent (not in voice channel)"
     logger.info(f"{emp['name']} [{parsed['activity']}] → Discord {status}")
