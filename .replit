@@ -50,3 +50,8 @@ externalPort = 8081
 [nix]
 channel = "stable-25_05"
 packages = ["openssl"]
+
+[userenv]
+
+[userenv.shared]
+DISCORD_STATUS_CHANNEL_ID = "1442466110497624142"
