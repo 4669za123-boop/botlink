@@ -9,6 +9,7 @@ from datetime import datetime
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from telethon.errors import AuthKeyDuplicatedError
 import discord
 from discord import ChannelType
 import aiohttp
@@ -630,7 +631,13 @@ async def start_telegram(on_activity):
             logger.error(f"Error handling Telegram message: {e}")
 
     logger.info(f"Listening for groups containing: {TARGET_GROUPS}")
-    await client.run_until_disconnected()
+    try:
+        await client.run_until_disconnected()
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +671,18 @@ async def start_telegram_with_reconnect(on_activity):
             # Telegram disconnected cleanly
             await discord_bot.send_status(f"🟡 **Telegram disconnected** — reconnecting in {backoff}s...")
             logger.warning("Telegram disconnected — reconnecting in %ds...", backoff)
+        except AuthKeyDuplicatedError:
+            # Session ถูกใช้จาก 2 IP พร้อมกัน (Railway overlap) — รอให้ instance เก่าตายก่อน
+            wait = 120
+            await discord_bot.send_status(
+                f"🔴 **Telegram error** — `AuthKeyDuplicatedError` (session conflict)\n"
+                f"> รอ {wait}s ให้ instance เก่าตายก่อน..."
+            )
+            logger.error("AuthKeyDuplicatedError — waiting %ds for old instance to die...", wait)
+            await asyncio.sleep(wait)
+            backoff = 5  # reset backoff หลังจาก conflict หาย
+            await discord_bot.send_status("🔄 **Telegram reconnecting...**")
+            continue
         except Exception as e:
             await discord_bot.send_status(f"🔴 **Telegram error** — `{type(e).__name__}` reconnecting in {backoff}s...")
             logger.error("Telegram error: %s — reconnecting in %ds...", e, backoff)
