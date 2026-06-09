@@ -24,15 +24,15 @@ args = "Telegram-Discord Bot"
 name = "Telegram-Discord Bot"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python bot/main.py"
 
-[workflows.workflow.metadata]
-outputType = "console"
-
 [agent]
-stack = "PNPM_WORKSPACE"
+stack = "BEST_EFFORT_FALLBACK"
 expertMode = true
 
 [postMerge]
