@@ -451,9 +451,14 @@ class ActivityBot(discord.Client):
                 current_ch = ch
 
         if is_return:
-            # กลับที่นั่ง → ย้ายกลับเฉพาะคนที่ถูกย้ายออกไป (กินข้าว) เท่านั้น
-            was_moved = member.id in self._moved_to_destination
-            if was_moved:
+            # กลับที่นั่ง → ย้ายกลับถ้า: ถูกบอทย้ายออก หรือ ตอนนี้อยู่ในห้องปลายทาง (กินข้าวเองก่อนกด / บอท restart)
+            currently_in_destination = (
+                member.voice and
+                member.voice.channel and
+                str(member.voice.channel.id) in DESTINATION_CHANNEL_IDS
+            )
+            should_move_back = member.id in self._moved_to_destination or currently_in_destination
+            if should_move_back:
                 move_target = work_vc or current_ch
                 if move_target:
                     try:
