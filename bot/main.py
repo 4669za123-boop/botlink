@@ -204,13 +204,13 @@ ACTIVITY_EMOJI = {
 
 # ---------------------------------------------------------------------------
 # Activity → Discord voice channel auto-move
-# Map activity keyword → exact Discord voice channel name (case-insensitive)
+# Map activity keyword → Discord voice channel ID (as string)
 # Leave empty string to disable auto-move for that activity
 # ---------------------------------------------------------------------------
 ACTIVITY_MOVE_CHANNEL: dict[str, str] = {
-    "กินข้าว": "กินข้าว",
-    "ทานข้าว": "กินข้าว",
-    "พัก": "พัก",
+    "กินข้าว": "",   # ใส่ channel ID ห้องกินข้าว เช่น "1234567890123456789"
+    "ทานข้าว": "",   # ใส่ channel ID ห้องกินข้าว (เหมือนกัน)
+    "พัก": "",       # ใส่ channel ID ห้องพัก
     "ปวดหนัก": "",
     "ปวดน้อย": "",
 }
@@ -312,11 +312,13 @@ class ActivityBot(discord.Client):
                 continue
         return None, None
 
-    async def find_voice_channel_by_name(self, guild: discord.Guild, name: str) -> discord.VoiceChannel | None:
-        name_lower = name.lower().strip()
-        for channel in guild.voice_channels:
-            if channel.name.lower().strip() == name_lower:
+    async def find_voice_channel_by_id(self, channel_id: str) -> discord.VoiceChannel | None:
+        try:
+            channel = self.get_channel(int(channel_id))
+            if isinstance(channel, discord.VoiceChannel):
                 return channel
+        except Exception as e:
+            logger.error(f"Failed to find channel by ID {channel_id}: {e}")
         return None
 
     async def find_voice_channel_for_member(self, discord_user_id: str) -> discord.VoiceChannel | None:
@@ -356,10 +358,10 @@ class ActivityBot(discord.Client):
         if not is_return:
             target_name = self.get_target_channel_name(activity)
             if target_name:
-                target_vc = await self.find_voice_channel_by_name(guild, target_name)
+                target_vc = await self.find_voice_channel_by_id(target_name)
                 if target_vc:
                     if current_vc and current_vc.id == target_vc.id:
-                        logger.info(f"{name} already in target channel '{target_name}', skipping move")
+                        logger.info(f"{name} already in target channel '{target_vc.name}', skipping move")
                     else:
                         try:
                             await member.move_to(target_vc)
@@ -369,7 +371,7 @@ class ActivityBot(discord.Client):
                         except Exception as e:
                             logger.error(f"Failed to move {name}: {e}")
                 else:
-                    logger.warning(f"Target channel '{target_name}' not found in server")
+                    logger.warning(f"Target channel ID '{target_name}' not found")
 
         # Send notification to original channel (before move)
         if current_vc:
