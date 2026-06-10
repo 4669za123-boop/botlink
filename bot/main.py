@@ -484,10 +484,10 @@ class ActivityBot(discord.Client):
             else:
                 logger.info(f"{name} was not moved out — skipping return move")
 
-            # แจ้งในห้องที่เคยแจ้งกิจกรรมล่าสุด (ถ้ามี) หรือห้องทำงาน
+            # แจ้งในห้องที่เคยแจ้งกิจกรรมล่าสุด
             last_ch_id = self._last_notified_channel.get(member.id)
             last_vc = await self.find_voice_channel_by_id(str(last_ch_id)) if last_ch_id else None
-            notify_vc = last_vc or work_vc or current_ch
+            notify_vc = last_vc or current_ch
 
         else:
             target_channel_id = self.get_target_channel_name(activity)
@@ -512,8 +512,8 @@ class ActivityBot(discord.Client):
                 else:
                     logger.warning(f"Target channel ID '{target_channel_id}' not found")
             else:
-                # ปวดน้อย / ปวดหนัก / พัก → แจ้งห้องทำงานจากสถิติ (หรือห้องปัจจุบันถ้ายังไม่มีสถิติ)
-                notify_vc = work_vc or current_ch
+                # ปวดน้อย / ปวดหนัก / พัก → แจ้งห้องที่นั่งอยู่ตอนนี้เลย
+                notify_vc = current_ch
                 if notify_vc is None:
                     logger.warning(f"{name} is not in any voice channel — notification skipped")
 
