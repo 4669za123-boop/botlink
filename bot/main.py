@@ -199,18 +199,14 @@ TARGET_GROUPS = ["Jun88-กลุ่มเช็คอิน打卡群", "Jun88-O
 # กลุ่มที่ใช้ระบบกะงาน → Sound ID สำหรับแต่ละกลุ่ม
 SHIFT_GROUPS = ["OL ชั่วคราว", "AM ONLINE เข้างาน", "พี่เลี้ยงAMOL-Jun88"]
 
+SHIFT_GROUP_SOUND_ID: dict[str, int] = {
+    "OL ชั่วคราว":         1518570639886389378,
+    "AM ONLINE เข้างาน":   1518570573943410798,
+    "พี่เลี้ยงAMOL-Jun88": 1518570639886389378,  # ใช้เสียงเดียวกับ OL
+}
+
 def get_shift_sound_id(group_name: str) -> int:
-    """อ่าน sound ID จาก env ทุกครั้ง (ไม่ cache ตอน startup)"""
-    mapping = {
-        "OL ชั่วคราว": os.environ.get("SHIFT_SOUND_ID_OL", ""),
-        "AM ONLINE เข้างาน": os.environ.get("SHIFT_SOUND_ID_AM_ONLINE", ""),
-        "พี่เลี้ยงAMOL-Jun88": os.environ.get("SHIFT_SOUND_ID_OL", ""),  # ใช้เสียงเดียวกับ OL
-    }
-    val = mapping.get(group_name, "")
-    try:
-        return int(val) if val else 0
-    except ValueError:
-        return 0
+    return SHIFT_GROUP_SOUND_ID.get(group_name, 0)
 
 # ความยาวเสียง (วินาที) ของแต่ละ sound_id — ใช้รอให้รอบ 1 จบก่อนเปิดรอบ 2
 SHIFT_SOUND_DURATION: dict[str, float] = {
