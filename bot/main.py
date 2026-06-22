@@ -204,6 +204,12 @@ SHIFT_GROUP_SOUND_ID: dict[str, str] = {
     "AM ONLINE เข้างาน": os.environ.get("SHIFT_SOUND_ID_AM_ONLINE", ""),
 }
 
+# ความยาวเสียง (วินาที) ของแต่ละ sound_id — ใช้รอให้รอบ 1 จบก่อนเปิดรอบ 2
+SHIFT_SOUND_DURATION: dict[str, float] = {
+    "1518570639886389378": 3.540,  # OL ชั่วคราว
+    "1518570573943410798": 2.520,  # AM ONLINE เข้างาน
+}
+
 # ข้อความกะงานที่ต้องดักจับ
 SHIFT_KEYWORDS = [
     "กะเช้า(08.00-20.00 น.) รอบที่ 1",
@@ -420,20 +426,33 @@ class ActivityBot(discord.Client):
         ch_names = [ch.name for ch in occupied.values()]
         logger.info(f"[SHIFT] {shift_label} — playing sound simultaneously in {len(occupied)} channel(s): {ch_names}")
 
+        sound_duration = SHIFT_SOUND_DURATION.get(str(sound_id), 3.0)
+
         async def play_in_channel(channel: discord.VoiceChannel):
             guild_id = channel.guild.id
             try:
-                for round_num in range(1, 3):
-                    await self.http.request(
-                        discord.http.Route(
-                            "POST",
-                            "/channels/{channel_id}/send-soundboard-sound",
-                            channel_id=channel.id,
-                        ),
-                        json={"sound_id": str(sound_id), "source_guild_id": str(guild_id)},
-                    )
-                    logger.info(f"[SHIFT] Played sound round {round_num} in #{channel.name}")
-                    await asyncio.sleep(0.5)
+                # รอบ 1
+                await self.http.request(
+                    discord.http.Route(
+                        "POST",
+                        "/channels/{channel_id}/send-soundboard-sound",
+                        channel_id=channel.id,
+                    ),
+                    json={"sound_id": str(sound_id), "source_guild_id": str(guild_id)},
+                )
+                logger.info(f"[SHIFT] Played sound round 1 in #{channel.name} — waiting {sound_duration}s")
+                # รอให้เสียงรอบ 1 จบก่อน
+                await asyncio.sleep(sound_duration)
+                # รอบ 2
+                await self.http.request(
+                    discord.http.Route(
+                        "POST",
+                        "/channels/{channel_id}/send-soundboard-sound",
+                        channel_id=channel.id,
+                    ),
+                    json={"sound_id": str(sound_id), "source_guild_id": str(guild_id)},
+                )
+                logger.info(f"[SHIFT] Played sound round 2 in #{channel.name}")
             except Exception as e:
                 logger.error(f"[SHIFT] Error playing sound in #{channel.name}: {e}")
 
