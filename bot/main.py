@@ -196,8 +196,13 @@ EMPLOYEES: dict[str, dict] = {
 
 TARGET_GROUPS = ["Jun88-กลุ่มเช็คอิน打卡群", "Jun88-OL กลุ่มเช็คอิน 打卡群", "OL ชั่วคราว", "AM ONLINE เข้างาน"]
 
-# กลุ่มที่ใช้ระบบกะงาน (ไม่ใช่เช็คอินรายบุคคล)
+# กลุ่มที่ใช้ระบบกะงาน → Sound ID สำหรับแต่ละกลุ่ม
 SHIFT_GROUPS = ["OL ชั่วคราว", "AM ONLINE เข้างาน"]
+
+SHIFT_GROUP_SOUND_ID: dict[str, str] = {
+    "OL ชั่วคราว": os.environ.get("SHIFT_SOUND_ID_OL", ""),
+    "AM ONLINE เข้างาน": os.environ.get("SHIFT_SOUND_ID_AM_ONLINE", ""),
+}
 
 # ข้อความกะงานที่ต้องดักจับ
 SHIFT_KEYWORDS = [
@@ -392,17 +397,10 @@ class ActivityBot(discord.Client):
     async def wait_until_ready_event(self):
         await self._ready_event.wait()
 
-    async def play_shift_sound(self, shift_label: str):
+    async def play_shift_sound(self, shift_label: str, sound_id: int):
         """เปิดเสียง soundboard ในทุกห้อง voice ที่มีพนักงานอยู่ (2 ครั้งต่อห้อง)"""
-        sound_id_str = os.environ.get("SHIFT_SOUND_ID", "")
-        if not sound_id_str:
-            logger.warning("[SHIFT] SHIFT_SOUND_ID not set — skipping soundboard")
-            return
-
-        try:
-            sound_id = int(sound_id_str)
-        except ValueError:
-            logger.error(f"[SHIFT] SHIFT_SOUND_ID is not a valid integer: {sound_id_str!r}")
+        if not sound_id:
+            logger.warning(f"[SHIFT] No sound_id for '{shift_label}' — skipping soundboard")
             return
 
         await self.wait_until_ready_event()
@@ -727,8 +725,11 @@ async def start_telegram(on_activity):
             if any(g in title for g in SHIFT_GROUPS):
                 matched = next((kw for kw in SHIFT_KEYWORDS if kw in text), None)
                 if matched:
-                    logger.info(f"[SHIFT] Detected '{matched}' in '{title}'")
-                    asyncio.create_task(discord_bot.play_shift_sound(matched))
+                    group_key = next((g for g in SHIFT_GROUPS if g in title), "")
+                    sound_id_str = SHIFT_GROUP_SOUND_ID.get(group_key, "")
+                    sound_id = int(sound_id_str) if sound_id_str else 0
+                    logger.info(f"[SHIFT] Detected '{matched}' in '{title}' (sound_id={sound_id})")
+                    asyncio.create_task(discord_bot.play_shift_sound(matched, sound_id))
                 return
 
             # กลุ่มเช็คอินปกติ → parse และแจ้ง Discord
