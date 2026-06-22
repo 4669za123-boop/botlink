@@ -194,16 +194,17 @@ EMPLOYEES: dict[str, dict] = {
     "8588408697": {"name": "TANGO", "discord_id": "1483771517601841265"},
 }
 
-TARGET_GROUPS = ["Jun88-กลุ่มเช็คอิน打卡群", "Jun88-OL กลุ่มเช็คอิน 打卡群", "OL ชั่วคราว", "AM ONLINE เข้างาน"]
+TARGET_GROUPS = ["Jun88-กลุ่มเช็คอิน打卡群", "Jun88-OL กลุ่มเช็คอิน 打卡群", "OL ชั่วคราว", "AM ONLINE เข้างาน", "พี่เลี้ยงAMOL-Jun88"]
 
 # กลุ่มที่ใช้ระบบกะงาน → Sound ID สำหรับแต่ละกลุ่ม
-SHIFT_GROUPS = ["OL ชั่วคราว", "AM ONLINE เข้างาน"]
+SHIFT_GROUPS = ["OL ชั่วคราว", "AM ONLINE เข้างาน", "พี่เลี้ยงAMOL-Jun88"]
 
 def get_shift_sound_id(group_name: str) -> int:
     """อ่าน sound ID จาก env ทุกครั้ง (ไม่ cache ตอน startup)"""
     mapping = {
         "OL ชั่วคราว": os.environ.get("SHIFT_SOUND_ID_OL", ""),
         "AM ONLINE เข้างาน": os.environ.get("SHIFT_SOUND_ID_AM_ONLINE", ""),
+        "พี่เลี้ยงAMOL-Jun88": os.environ.get("SHIFT_SOUND_ID_OL", ""),  # ใช้เสียงเดียวกับ OL
     }
     val = mapping.get(group_name, "")
     try:
