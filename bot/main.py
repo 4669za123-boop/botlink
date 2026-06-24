@@ -192,6 +192,14 @@ EMPLOYEES: dict[str, dict] = {
     "8662504657": {"name": "AFEY", "discord_id": "1484560819973787680"},
     "6647194217": {"name": "POINT", "discord_id": "1483338333013807166"},
     "8588408697": {"name": "TANGO", "discord_id": "1483771517601841265"},
+    "8911647927": {"name": "NATTARACK", "discord_id": "1516619284493766728"},
+    "8553978679": {"name": "ICE", "discord_id": "1450370026858348656"},
+}
+
+# พนักงานที่ไม่ต้องย้าย voice channel ตอนพักกิจกรรมใดๆ (ระบุด้วย Discord ID)
+NO_MOVE_DISCORD_IDS: set[str] = {
+    "1516619284493766728",  # NATTARACK
+    "1450370026858348656",  # ICE
 }
 
 TARGET_GROUPS = ["Jun88-กลุ่มเช็คอิน打卡群", "Jun88-OL กลุ่มเช็คอิน 打卡群", "OL ชั่วคราว", "AM ONLINE เข้างาน", "พี่เลี้ยงAMOL-Jun88"]
@@ -598,22 +606,25 @@ class ActivityBot(discord.Client):
             if target_channel_id:
                 # กินข้าว / ทานข้าว → แจ้งในห้องทำงาน แล้วย้ายไป Dining
                 notify_vc = work_vc or current_ch
-                target_vc = await self.find_voice_channel_by_id(target_channel_id)
-                if target_vc:
-                    mem_vc = member.voice.channel if member.voice else None
-                    if mem_vc and mem_vc.id == target_vc.id:
-                        logger.info(f"{name} already in target channel '{target_vc.name}', skipping move")
-                    else:
-                        try:
-                            await member.move_to(target_vc)
-                            self._moved_to_destination.add(member.id)
-                            logger.info(f"Moved {name} → #{target_vc.name}")
-                        except discord.Forbidden:
-                            logger.error(f"No permission to move {name} — bot needs 'Move Members' permission")
-                        except Exception as e:
-                            logger.error(f"Failed to move {name}: {e}")
+                if discord_user_id in NO_MOVE_DISCORD_IDS:
+                    logger.info(f"{name} is in NO_MOVE list — skipping voice channel move")
                 else:
-                    logger.warning(f"Target channel ID '{target_channel_id}' not found")
+                    target_vc = await self.find_voice_channel_by_id(target_channel_id)
+                    if target_vc:
+                        mem_vc = member.voice.channel if member.voice else None
+                        if mem_vc and mem_vc.id == target_vc.id:
+                            logger.info(f"{name} already in target channel '{target_vc.name}', skipping move")
+                        else:
+                            try:
+                                await member.move_to(target_vc)
+                                self._moved_to_destination.add(member.id)
+                                logger.info(f"Moved {name} → #{target_vc.name}")
+                            except discord.Forbidden:
+                                logger.error(f"No permission to move {name} — bot needs 'Move Members' permission")
+                            except Exception as e:
+                                logger.error(f"Failed to move {name}: {e}")
+                    else:
+                        logger.warning(f"Target channel ID '{target_channel_id}' not found")
             else:
                 # ปวดน้อย / ปวดหนัก / พัก → แจ้งห้องที่นั่งอยู่ตอนนี้เลย
                 notify_vc = current_ch
