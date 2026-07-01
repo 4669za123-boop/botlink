@@ -836,6 +836,33 @@ async def status_command(interaction: discord.Interaction):
 # ---------------------------------------------------------------------------
 # Telegram userbot
 # ---------------------------------------------------------------------------
+async def supabase_restore_open_breaks() -> None:
+    """ตอน startup โหลด break_sessions ที่ยังเปิดอยู่กลับเข้า _currently_out"""
+    if not supabase:
+        return
+    try:
+        break_date = get_break_date_str()
+        prev_date = (get_thai_time() - timedelta(days=1)).strftime("%Y-%m-%d")
+        res = supabase.from_("break_sessions") \
+            .select("staff_name") \
+            .in_("break_date", [break_date, prev_date]) \
+            .is_("break_end", "null") \
+            .execute()
+        if not res.data:
+            logger.info("[Supabase] ไม่มี open break sessions ค้างอยู่")
+            return
+        name_to_tid = {v["name"]: k for k, v in EMPLOYEES.items()}
+        restored = 0
+        for r in res.data:
+            tid = name_to_tid.get(r["staff_name"])
+            if tid and tid not in _currently_out:
+                _currently_out[tid] = ""  # ไม่รู้ group_name เดิม
+                restored += 1
+        logger.info(f"[Supabase] Restored {restored} open break sessions → _currently_out")
+    except Exception as e:
+        logger.error(f"[Supabase] supabase_restore_open_breaks error: {e}")
+
+
 async def start_telegram(on_activity):
     api_id = int(os.environ.get("TELEGRAM_API_ID", "0"))
     api_hash = os.environ.get("TELEGRAM_API_HASH", "")
@@ -869,6 +896,7 @@ async def start_telegram(on_activity):
     me = await client.get_me()
     logger.info(f"Telegram connected as: {me.username or me.first_name}")
     await discord_bot.wait_until_ready_event()
+    await supabase_restore_open_breaks()
     await discord_bot.send_status("🟢 **Bot online** — Telegram + Discord connected")
 
     @client.on(events.NewMessage())
