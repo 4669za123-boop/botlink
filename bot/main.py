@@ -231,7 +231,23 @@ SHIFT_KEYWORDS = [
     "กะดึก(20.00-08.00 น.) รอบที่ 2",
 ]
 
+def shift_keyword_to_name(keyword: str) -> str:
+    for k, v in [("เช้า", "กะเช้า"), ("ดึก", "กะดึก")]:
+        if k in keyword:
+            for r in ["1", "2"]:
+                if f"รอบที่ {r}" in keyword:
+                    return f"{v} รอบ {r}"
+    return keyword
+
 RETURN_KEYWORDS = ["กลับที่นั่ง", "กลับที่นัง", "回座"]
+
+# ---------------------------------------------------------------------------
+# Check-in window & photo tracking
+# ---------------------------------------------------------------------------
+_checkin_window: dict = {"keyword": None, "shift_name": None}
+_photos_sent: set[str] = set()        # telegram_id ที่ส่งรูปในช่วงเช็คชื่อนี้แล้ว
+_out_during_window: set[str] = set()  # telegram_id ที่ออกไปทำกิจกรรมระหว่าง/ก่อนช่วง
+_currently_out: set[str] = set()      # telegram_id ที่ตอนนี้อยู่ระหว่างกิจกรรม
 
 ACTIVITY_EMOJI = {
     "กินข้าว": "🍚", "ทานข้าว": "🍚",
@@ -540,7 +556,8 @@ class ActivityBot(discord.Client):
         return max(time_by_ch, key=lambda ch: time_by_ch[ch])
 
     async def send_notification(self, discord_user_id: str, name: str, activity: str,
-                                 is_return: bool, group_name: str, timestamp: str | None = None) -> tuple[bool, str | None]:
+                                 is_return: bool, group_name: str, timestamp: str | None = None,
+                                 checkin_reminder: str | None = None) -> tuple[bool, str | None]:
         emoji = get_emoji(activity, is_return)
         action = f"**{name}** กลับที่นั่งแล้ว" if is_return else f"**{name}** ไป{activity}"
         if timestamp:
@@ -555,6 +572,8 @@ class ActivityBot(discord.Client):
         else:
             time_part = datetime.now().strftime("%H:%M")
         message = f"{emoji} {action}\n> 🕐 {time_part} · 📌 {group_name}"
+        if checkin_reminder:
+            message += f"\n{checkin_reminder}"
 
         guild, member = await self.find_member(discord_user_id)
         if member is None:
@@ -771,6 +790,11 @@ async def start_telegram(on_activity):
                     group_key = next((g for g in SHIFT_GROUPS if g in title), "")
                     sound_id = get_shift_sound_id(group_key)
                     logger.info(f"[SHIFT] Detected '{matched}' in '{title}' (sound_id={sound_id})")
+                    _checkin_window.update({"keyword": matched, "shift_name": shift_keyword_to_name(matched)})
+                    _photos_sent.clear()
+                    _out_during_window.clear()
+                    _out_during_window.update(_currently_out)
+                    logger.info(f"[CHECKIN] Window opened: {_checkin_window['shift_name']}, {len(_out_during_window)} already out")
 
                     async def _run_shift_sound(label=matched, sid=sound_id):
                         try:
@@ -780,6 +804,13 @@ async def start_telegram(on_activity):
                             logger.error(f"[SHIFT] Unhandled error in play_shift_sound: {exc}")
 
                     asyncio.create_task(_run_shift_sound())
+                    return
+
+                if event.message.photo and _checkin_window["keyword"]:
+                    sender_id = str(getattr(event.message, "sender_id", None) or "")
+                    if sender_id in EMPLOYEES:
+                        _photos_sent.add(sender_id)
+                        logger.info(f"[CHECKIN] Photo from {EMPLOYEES[sender_id]['name']} recorded")
                 return
 
             # กลุ่มเช็คอินปกติ → parse และแจ้ง Discord
@@ -811,6 +842,22 @@ async def on_activity(parsed: dict):
         logger.warning(f"Unknown Telegram ID: {parsed['telegram_id']}")
         return
 
+    tid = parsed["telegram_id"]
+
+    # Track activity state
+    if parsed["is_return"]:
+        _currently_out.discard(tid)
+    else:
+        _currently_out.add(tid)
+        if _checkin_window["keyword"]:
+            _out_during_window.add(tid)
+
+    # เช็คว่าต้องแจ้งเตือนถ่ายรูปไหม
+    checkin_reminder = None
+    if parsed["is_return"] and _checkin_window["keyword"]:
+        if tid in _out_during_window and tid not in _photos_sent:
+            checkin_reminder = f"📷 {emp['name']} กลับที่นั่งแล้วอย่าลืมถ่ายรูปเช็คชื่อด้วยนะ! · {_checkin_window['shift_name']}"
+
     await discord_bot.wait_until_ready_event()
     sent, channel = await discord_bot.send_notification(
         emp["discord_id"],
@@ -819,6 +866,7 @@ async def on_activity(parsed: dict):
         parsed["is_return"],
         parsed["group_name"],
         parsed.get("timestamp"),
+        checkin_reminder=checkin_reminder,
     )
     status = f"sent to #{channel}" if sent else "not sent (not in voice channel)"
     logger.info(f"{emp['name']} [{parsed['activity']}] → Discord {status}")
